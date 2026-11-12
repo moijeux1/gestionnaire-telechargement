@@ -1,0 +1,4 @@
+#!/bin/sh
+gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
+update-desktop-database -q 2>/dev/null || true
+exit 0

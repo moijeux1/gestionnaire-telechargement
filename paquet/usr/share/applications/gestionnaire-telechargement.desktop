@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Gestionnaire de téléchargement
+Comment=Télécharge les gros fichiers avec reprise automatique
+Exec=gestionnaire-telechargement %U
+Icon=gestionnaire-telechargement
+Categories=Network;FileTransfer;
+Terminal=false

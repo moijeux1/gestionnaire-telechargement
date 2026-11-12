@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Gestionnaire : brancher sur Thunderbird
+Comment=Les liens ChatGPT des mails s'ouvrent dans le gestionnaire (Thunderbird fermé)
+Exec=gestionnaire-brancher-thunderbird
+Icon=gestionnaire-telechargement
+Categories=Network;
+Terminal=false

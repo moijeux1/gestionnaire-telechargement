@@ -1,0 +1,8 @@
+#!/bin/bash
+# Liens ChatGPT/OpenAI -> gestionnaire ; le reste -> navigateur par défaut.
+URL="$1"
+case "$URL" in
+  *chatgpt.com*|*openai.com*|*oaiusercontent.com*|*oaistatic.com*)
+    exec gestionnaire-telechargement --cookies-firefox "$URL" ;;
+  *) exec firefox "$URL" ;;
+esac

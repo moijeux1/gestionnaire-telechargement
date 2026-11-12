@@ -1,0 +1,10 @@
+Package: gestionnaire-telechargement
+Version: 1.0
+Section: net
+Priority: optional
+Architecture: all
+Depends: python3, python3-tk, python3-requests, libnotify-bin, zenity
+Maintainer: Dominique <noreply@example.invalid>
+Description: Gestionnaire de téléchargement de gros fichiers
+ Reprise automatique après coupure, relances, diagnostic des liens expirés,
+ cookies Firefox optionnels, interface graphique avec barre de progression.
