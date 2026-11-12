@@ -15,7 +15,7 @@ Certains serveurs ferment la connexion tous les ~2 Go. Firefox abandonne ; ce ge
 ## Installation (Debian / Ubuntu / Linux Mint)
 ```bash
 ./construire-deb.sh
-sudo apt install ./gestionnaire-telechargement_1.0_all.deb
+sudo apt install ./gestionnaire-telechargement_1.1_all.deb
 ```
 Ou lancer sans installer : `python3 paquet/usr/lib/gestionnaire-telechargement/gestionnaire.py "LIEN"` (nécessite `python3-tk` et `python3-requests`).
 

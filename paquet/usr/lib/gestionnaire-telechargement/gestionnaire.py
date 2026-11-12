@@ -195,6 +195,15 @@ def gui(url, args):
     root = tk.Tk()
     root.title("Gestionnaire de téléchargement")
     root.geometry("640x340")
+    try:
+        for chemin in ("/usr/share/icons/hicolor/256x256/apps/gestionnaire-telechargement.png",
+                       str(Path(__file__).resolve().parents[3] / "logo" / "logo-256.png")):
+            if Path(chemin).exists():
+                root._icone = tk.PhotoImage(file=chemin)  # garde une référence
+                root.iconphoto(True, root._icone)
+                break
+    except Exception:
+        pass
     url = url or lien_presse_papiers(root)
     var_url = tk.StringVar(value=url)
     ttk.Label(root, text="Lien :").pack(anchor="w", padx=10, pady=(10, 0))
