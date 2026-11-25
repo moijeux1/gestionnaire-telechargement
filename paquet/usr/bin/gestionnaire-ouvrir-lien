@@ -1,8 +1,12 @@
 #!/bin/bash
-# Liens ChatGPT/OpenAI -> gestionnaire ; le reste -> navigateur par défaut.
+# Liens https de ChatGPT/OpenAI -> gestionnaire ; le reste -> Firefox.
+# Le tri se fait sur le nom du serveur exact, jamais sur un morceau de l'adresse.
 URL="$1"
-case "$URL" in
-  *chatgpt.com*|*openai.com*|*oaiusercontent.com*|*oaistatic.com*)
-    exec gestionnaire-telechargement --cookies-firefox "$URL" ;;
-  *) exec firefox "$URL" ;;
-esac
+case "$URL" in -*) exit 1 ;; esac
+if [[ "$URL" =~ ^https://([A-Za-z0-9.-]+)(:443)?([/?#]|$) ]]; then
+  case "${BASH_REMATCH[1],,}" in
+    chatgpt.com|*.chatgpt.com|openai.com|*.openai.com|oaiusercontent.com|*.oaiusercontent.com|oaistatic.com|*.oaistatic.com)
+      exec gestionnaire-telechargement --cookies-firefox "$URL" ;;
+  esac
+fi
+exec firefox "$URL"

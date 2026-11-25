@@ -14,14 +14,17 @@ l'en-tête Range pour reprendre exactement où l'on s'est arrêté. Si le serveu
 sait pas reprendre ou si le lien a expiré, le message l'explique clairement.
 """
 import argparse
+import html
 import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import threading
 import time
+from http.cookiejar import DefaultCookiePolicy
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -37,41 +40,89 @@ class Erreur(Exception):
     pass
 
 
+# Un cookie sans « . » initial reste réservé à son hôte exact.
+REGLE_COOKIES = DefaultCookiePolicy(strict_ns_domain=DefaultCookiePolicy.DomainStrictNonDomain)
+
+
+class Session(requests.Session):
+    """Session qui garde la règle stricte : requests la perd en recopiant les cookies d'une requête."""
+
+    def prepare_request(self, request):
+        p = super().prepare_request(request)
+        p._cookies.set_policy(REGLE_COOKIES)  # conservée ensuite à travers les redirections
+        p.headers.pop("Cookie", None)
+        p.prepare_cookies(p._cookies)
+        return p
+
+
+def ajoute_cookie(jar, nom, valeur, hote, chemin):
+    """Ajoute un cookie lié à son domaine et à son chemin, envoyé en https seulement."""
+    c = requests.cookies.create_cookie(nom, valeur, domain=hote, path=chemin or "/", secure=True)
+    c.domain_specified = hote.startswith(".")
+    jar.set_cookie(c)
+
+
 def cookies_firefox(url):
-    """Cookies du domaine, lus dans une copie de cookies.sqlite de Firefox."""
-    hote = urlparse(url).hostname or ""
-    parts = hote.split(".")
+    """Cookies du domaine, lus dans une copie temporaire (effacée aussitôt) de cookies.sqlite."""
+    adresse = urlparse(url)
+    if adresse.scheme != "https":
+        raise Erreur("Les cookies de Firefox ne sont envoyés qu'à une adresse en https.")
+    parts = (adresse.hostname or "").split(".")
     domaines = {".".join(parts[i:]) for i in range(len(parts) - 1)}
-    jar = {}
+    jar = requests.cookies.RequestsCookieJar()
     for profil in list((Path.home() / ".mozilla/firefox").glob("*.default*")):
         src = profil / "cookies.sqlite"
         if not src.exists():
             continue
-        tmp = Path(tempfile.mkdtemp()) / "c.sqlite"
-        shutil.copy(src, tmp)
-        for ext in ("-wal", "-shm"):
-            if (profil / ("cookies.sqlite" + ext)).exists():
-                shutil.copy(profil / ("cookies.sqlite" + ext), str(tmp) + ext)
-        try:
-            con = sqlite3.connect(tmp)
-            for nom, val, h in con.execute("select name, value, host from moz_cookies"):
-                if h.lstrip(".") in domaines:
-                    jar[nom] = val
-            con.close()
-        except sqlite3.Error:
-            pass
+        with tempfile.TemporaryDirectory() as dossier:
+            tmp = Path(dossier) / "c.sqlite"
+            shutil.copy(src, tmp)
+            for ext in ("-wal", "-shm"):
+                if (profil / ("cookies.sqlite" + ext)).exists():
+                    shutil.copy(profil / ("cookies.sqlite" + ext), str(tmp) + ext)
+            try:
+                con = sqlite3.connect(tmp)
+                try:
+                    for nom, val, h, chemin in con.execute("select name, value, host, path from moz_cookies"):
+                        if h.lstrip(".") in domaines:
+                            ajoute_cookie(jar, nom, val, h, chemin)
+                finally:
+                    con.close()
+            except sqlite3.Error:
+                pass
     return jar
+
+
+def nom_sur(nom):
+    """Réduit un nom venu du serveur à un simple nom de fichier, visible et sans chemin."""
+    nom = str(nom or "").replace("\\", "/").rsplit("/", 1)[-1]
+    nom = "".join(c for c in nom if c.isprintable()).strip().lstrip(". ")
+    base, ext = os.path.splitext(nom)
+    ext = ext[:20]
+    while len((base + ext).encode("utf-8")) > 200:  # laisse la place à « -2 » et « .part »
+        base = base[:-1]
+    return (base + ext) or "telechargement"
 
 
 def nom_fichier(rep, url):
     cd = rep.headers.get("Content-Disposition", "")
     m = re.search(r"filename\*=(?:UTF-8'')?([^;]+)", cd, re.I)
     if m:
-        return unquote(m.group(1).strip('" '))
+        return nom_sur(unquote(m.group(1).strip('" ')))
     m = re.search(r'filename="?([^";]+)"?', cd, re.I)
     if m:
-        return m.group(1)
-    return unquote(Path(urlparse(rep.url or url).path).name) or "telechargement"
+        return nom_sur(m.group(1))
+    return nom_sur(unquote(urlparse(rep.url or url).path.rsplit("/", 1)[-1]))
+
+
+def libre(chemin, taille=0):
+    """Chemin qui n'écrase rien (nom-2, nom-3…). Un fichier déjà complet (même taille) est reconnu."""
+    p, n = chemin, 2
+    while os.path.lexists(p):
+        if taille and p.is_file() and p.stat().st_size == taille:
+            break
+        p, n = chemin.with_name(f"{chemin.stem}-{n}{chemin.suffix}"), n + 1
+    return p
 
 
 def explique(code):
@@ -86,12 +137,14 @@ def explique(code):
 
 def telecharger(url, dossier=DOSSIER, part_existant=None, cookies=None,
                 log=print, progres=lambda fait, total, vitesse: None, stop=None):
+    if urlparse(url).scheme not in ("http", "https"):
+        raise Erreur("Seules les adresses http et https sont acceptées.")
     dossier = Path(dossier)
     dossier.mkdir(parents=True, exist_ok=True)
-    s = requests.Session()
+    s = Session()
     s.headers["User-Agent"] = UA
-    if cookies:
-        s.cookies.update(cookies)
+    if cookies is not None:
+        s.cookies = cookies  # bocal lié aux domaines (voir cookies_firefox), jamais un simple dictionnaire
 
     # 1) Sonde : nom, taille, reprise possible ?
     rep = s.get(url, stream=True, timeout=30, headers={"Range": "bytes=0-0"}, allow_redirects=True)
@@ -114,11 +167,14 @@ def telecharger(url, dossier=DOSSIER, part_existant=None, cookies=None,
     part = Path(str(final) + ".part")
     if part_existant:
         shutil.move(str(part_existant), part) if Path(part_existant) != part else None
-    if final.exists() and total and final.stat().st_size == total:
+    if final.is_file() and not final.is_symlink() and final.stat().st_size == 0:
+        final.unlink()  # coquille vide laissée par un échec
+    final = libre(final, total)
+    if total and final.is_file() and final.stat().st_size == total:
         log("Déjà téléchargé en entier.")
         return final
-    if final.exists() and final.stat().st_size == 0:
-        final.unlink()  # coquille vide laissée par un échec
+    if part.is_symlink():
+        raise Erreur(f"{part.name} est un lien symbolique : téléchargement refusé.")
 
     fait = part.stat().st_size if part.exists() else 0
     if total and fait > total:
@@ -171,13 +227,18 @@ def telecharger(url, dossier=DOSSIER, part_existant=None, cookies=None,
 
     if total and part.stat().st_size != total:
         raise Erreur("Taille finale incorrecte, fichier non validé.")
+    final = libre(final)  # un fichier du même nom a pu apparaître entre-temps
     os.replace(part, final)
     log(f"Terminé : {final}")
     return final
 
 
 def notifier(titre, texte):
-    os.system(f'notify-send "{titre}" "{texte}" 2>/dev/null')
+    try:  # liste d'arguments : aucun interpréteur de commandes ne lit le texte
+        subprocess.run(["notify-send", "--", titre, html.escape(texte, quote=False)],
+                       stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def lien_presse_papiers(root):
@@ -248,8 +309,9 @@ def gui(url, args):
     fr = ttk.Frame(root); fr.pack(pady=(0, 10))
     btn = ttk.Button(fr, text="Télécharger / Reprendre", command=lancer); btn.pack(side="left", padx=5)
     ttk.Button(fr, text="Pause", command=stop.set).pack(side="left", padx=5)
-    if url:
-        root.after(300, lancer)
+    if url:  # jamais de démarrage automatique : le lien peut venir d'un courriel
+        hote = urlparse(url).hostname or "?"
+        etat.set(f"Vérifie le lien, puis clique sur « Télécharger ». Serveur : {hote}")
     root.mainloop()
 
 
